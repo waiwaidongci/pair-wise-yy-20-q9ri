@@ -108,6 +108,101 @@ select {
   padding: 10px;
 }
 
+.mixer {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.mixer-top {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mixer-top h2 {
+  flex: 1;
+  margin: 0;
+}
+
+.mixer-top label {
+  width: 150px;
+}
+
+#resetMeasureBtn {
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+}
+
+.mixer-hint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mixer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.part-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 10px;
+}
+
+.part-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.part-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.part-badge.on {
+  border-color: var(--active);
+  background: var(--active);
+  color: white;
+}
+
+.mute-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mute-row input {
+  width: auto;
+}
+
+.mixer-msg {
+  min-height: 20px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mixer-msg.error {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .stage {
   display: grid;
   grid-template-columns: 250px minmax(520px, 1fr) 290px;
@@ -222,6 +317,10 @@ select {
   .controls {
     grid-template-columns: 1fr;
   }
+
+  .mixer-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -229,5 +328,9 @@ select {
   .transport {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .mixer-grid {
+    grid-template-columns: 1fr;
   }
 }

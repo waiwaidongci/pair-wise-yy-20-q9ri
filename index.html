@@ -35,6 +35,25 @@
       <label>难点批注<input id="noteInput" placeholder="如：第2小节小锣晚半拍"></label>
     </section>
 
+    <section class="mixer">
+      <div class="mixer-top">
+        <h2>声部控制</h2>
+        <label>设置目标
+          <select id="mixerTarget">
+            <option value="">全段</option>
+            <option value="0">第1小节</option>
+            <option value="1">第2小节</option>
+            <option value="2">第3小节</option>
+            <option value="3">第4小节</option>
+          </select>
+        </label>
+        <button id="resetMeasureBtn" type="button" hidden>本小节恢复全段</button>
+      </div>
+      <p class="mixer-hint">每小节可覆盖全段设置，突出要纠正的声部；已有口令的小节不允许把发声的乐器全部静音。</p>
+      <div id="mixerGrid" class="mixer-grid"></div>
+      <p id="mixerMsg" class="mixer-msg" role="status"></p>
+    </section>
+
     <section class="stage">
       <aside class="segments">
         <h2>已存方案</h2>
@@ -51,6 +70,8 @@
       </aside>
     </section>
   </main>
+  <script src="./mixer.js"></script>
+  <script src="./schemes.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

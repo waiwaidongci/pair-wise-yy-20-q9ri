@@ -1,23 +1,13 @@
-const storageKey = "wxyy-4-luogujing-grid";
-const instruments = [
-  { name: "大锣", token: "仓", freq: 180 },
-  { name: "鼓", token: "冬", freq: 120 },
-  { name: "钹", token: "才", freq: 360 },
-  { name: "小锣", token: "台", freq: 520 }
-];
-const steps = 16;
-const state = JSON.parse(localStorage.getItem(storageKey) || "null") || {
-  pieceName: "出场锣鼓-慢起",
-  bpm: 96,
-  loop: "",
-  notes: [],
-  pattern: instruments.map((instrument) => Array.from({ length: steps }, (_, index) => index % 4 === 0 ? instrument.token : "")),
-  saved: []
-};
+// 页面控件：排练网格、声部面板、播放与方案列表的渲染和交互。
+const { Mixer, Schemes } = window.Luogujing;
+const { instruments, steps, beatsPerMeasure } = Mixer;
+
+const state = Schemes.restore();
 
 let timer = null;
 let playhead = 0;
 let audioContext = null;
+let mixerTarget = ""; // "" 为全段，否则是要覆盖的小节序号（0 起）
 
 const grid = document.querySelector("#grid");
 const savedList = document.querySelector("#savedList");
@@ -27,20 +17,25 @@ const pieceName = document.querySelector("#pieceName");
 const bpmInput = document.querySelector("#bpmInput");
 const loopSelect = document.querySelector("#loopSelect");
 const noteInput = document.querySelector("#noteInput");
+const mixerGrid = document.querySelector("#mixerGrid");
+const mixerTargetSelect = document.querySelector("#mixerTarget");
+const resetMeasureBtn = document.querySelector("#resetMeasureBtn");
+const mixerMsg = document.querySelector("#mixerMsg");
 
 function save() {
-  localStorage.setItem(storageKey, JSON.stringify(state));
+  Schemes.persist(state);
 }
 
 function syncFields() {
   pieceName.value = state.pieceName;
   bpmInput.value = state.bpm;
   loopSelect.value = state.loop;
+  mixerTargetSelect.value = mixerTarget;
 }
 
 function beatLabel(index) {
-  const measure = Math.floor(index / 4) + 1;
-  const beat = (index % 4) + 1;
+  const measure = Math.floor(index / beatsPerMeasure) + 1;
+  const beat = (index % beatsPerMeasure) + 1;
   return `${measure}-${beat}`;
 }
 
@@ -62,10 +57,38 @@ function renderGrid() {
   grid.innerHTML = [...header, ...rows].join("");
 }
 
+function renderMixer() {
+  const measure = mixerTarget === "" ? null : Number(mixerTarget);
+  const overrides = measure === null ? null : state.mixer.measures[measure];
+  resetMeasureBtn.hidden = measure === null || !overrides;
+
+  mixerGrid.innerHTML = instruments.map((instrument) => {
+    const part = Mixer.effectiveFor(state.mixer, measure, instrument.name);
+    const overridden = Boolean(overrides && overrides[instrument.name]);
+    const badge = measure === null
+      ? ""
+      : `<span class="part-badge ${overridden ? "on" : ""}">${overridden ? "已覆盖全段" : "沿用全段"}</span>`;
+    return `
+      <article class="part-card" data-name="${instrument.name}">
+        <header><strong>${instrument.name}</strong>${badge}</header>
+        <label>音量（0-100）
+          <input type="number" min="0" max="100" step="1" value="${part.volume}" data-field="volume">
+        </label>
+        <label>左右声道（-50 至 50）
+          <input type="number" min="-50" max="50" step="1" value="${part.pan}" data-field="pan">
+        </label>
+        <label class="mute-row">
+          <input type="checkbox" data-field="muted" ${part.muted ? "checked" : ""}> 静音
+        </label>
+      </article>
+    `;
+  }).join("");
+}
+
 function renderSidebars() {
-  const filledByMeasure = [0, 1, 2, 3].map((measure) => {
-    const start = measure * 4;
-    const count = state.pattern.flatMap((row) => row.slice(start, start + 4)).filter(Boolean).length;
+  const filledByMeasure = Array.from({ length: Mixer.measureCount }, (_, measure) => {
+    const start = measure * beatsPerMeasure;
+    const count = state.pattern.flatMap((row) => row.slice(start, start + beatsPerMeasure)).filter(Boolean).length;
     return { measure: measure + 1, count };
   });
   structure.innerHTML = filledByMeasure.map((item) => `
@@ -78,7 +101,7 @@ function renderSidebars() {
 
   savedList.innerHTML = state.saved.length ? state.saved.map((item) => `
     <button class="saved-item" type="button" data-load="${item.id}">
-      <strong>${item.name}</strong><br><span>${item.bpm}BPM · ${item.notes.length}条批注</span>
+      <strong>${item.name}</strong><br><span>${item.bpm}BPM · ${item.notes.length}条批注${item.mixer ? " · 含声部设置" : ""}</span>
     </button>
   `).join("") : "<p>还没有保存方案。</p>";
 }
@@ -86,18 +109,45 @@ function renderSidebars() {
 function render() {
   syncFields();
   renderGrid();
+  renderMixer();
   renderSidebars();
 }
 
-function playSound(instrument) {
+function showMixerError(result) {
+  mixerMsg.classList.add("error");
+  if (result.reason === "volume") {
+    mixerMsg.textContent = `${result.name}的音量需在 0 到 100 之间，已保留原设置。`;
+  } else if (result.reason === "pan") {
+    mixerMsg.textContent = `${result.name}的左右声道需在 -50 到 50 之间，已保留原设置。`;
+  } else if (result.reason === "silence") {
+    const detail = result.violations
+      .map((item) => `第${item.measure}小节（${item.instruments.join("、")}）`)
+      .join("；");
+    mixerMsg.textContent = `修改未采用：${detail}已有口令，不能把发声的乐器全部静音。`;
+  }
+}
+
+function clearMixerMsg() {
+  mixerMsg.textContent = "";
+  mixerMsg.classList.remove("error");
+}
+
+function playSound(instrument, part) {
+  if (part.muted || part.volume <= 0) return;
   audioContext ||= new AudioContext();
   const osc = audioContext.createOscillator();
   const gain = audioContext.createGain();
   osc.frequency.value = instrument.freq;
   osc.type = instrument.name === "鼓" ? "sine" : "square";
-  gain.gain.setValueAtTime(0.08, audioContext.currentTime);
+  gain.gain.setValueAtTime(0.1 * (part.volume / 100), audioContext.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.08);
-  osc.connect(gain).connect(audioContext.destination);
+  if (audioContext.createStereoPanner) {
+    const panner = audioContext.createStereoPanner();
+    panner.pan.value = part.pan / 50;
+    osc.connect(gain).connect(panner).connect(audioContext.destination);
+  } else {
+    osc.connect(gain).connect(audioContext.destination);
+  }
   osc.start();
   osc.stop(audioContext.currentTime + 0.09);
 }
@@ -109,16 +159,18 @@ function highlight(step) {
 
 function currentRange() {
   if (state.loop === "") return [0, steps - 1];
-  const start = Number(state.loop) * 4;
-  return [start, start + 3];
+  const start = Number(state.loop) * beatsPerMeasure;
+  return [start, start + beatsPerMeasure - 1];
 }
 
 function tick() {
   const [start, end] = currentRange();
   if (playhead < start || playhead > end) playhead = start;
   highlight(playhead);
+  const measure = Math.floor(playhead / beatsPerMeasure);
   instruments.forEach((instrument, rowIndex) => {
-    if (state.pattern[rowIndex][playhead]) playSound(instrument);
+    if (!state.pattern[rowIndex][playhead]) return;
+    playSound(instrument, Mixer.effectiveFor(state.mixer, measure, instrument.name));
   });
   playhead = playhead >= end ? start : playhead + 1;
 }
@@ -161,6 +213,43 @@ noteInput.addEventListener("keydown", (event) => {
   renderSidebars();
 });
 
+mixerTargetSelect.addEventListener("change", () => {
+  mixerTarget = mixerTargetSelect.value;
+  clearMixerMsg();
+  renderMixer();
+});
+
+mixerGrid.addEventListener("change", (event) => {
+  const card = event.target.closest(".part-card");
+  const field = event.target.dataset.field;
+  if (!card || !field) return;
+  const patch = field === "muted"
+    ? { muted: event.target.checked }
+    : { [field]: event.target.valueAsNumber };
+  const result = Mixer.applyChange(state.mixer, state.pattern, mixerTarget, card.dataset.name, patch);
+  if (result.ok) {
+    state.mixer = result.mixer;
+    clearMixerMsg();
+    save();
+  } else {
+    showMixerError(result);
+  }
+  renderMixer();
+});
+
+resetMeasureBtn.addEventListener("click", () => {
+  if (mixerTarget === "") return;
+  const result = Mixer.clearMeasure(state.mixer, state.pattern, Number(mixerTarget));
+  if (result.ok) {
+    state.mixer = result.mixer;
+    clearMixerMsg();
+    save();
+    renderMixer();
+  } else {
+    showMixerError(result);
+  }
+});
+
 document.querySelector("#playBtn").addEventListener("click", () => {
   if (timer) clearInterval(timer);
   playhead = currentRange()[0];
@@ -175,28 +264,17 @@ document.querySelector("#stopBtn").addEventListener("click", () => {
 });
 
 document.querySelector("#saveBtn").addEventListener("click", () => {
-  state.saved.unshift({
-    id: crypto.randomUUID(),
-    name: state.pieceName || "未命名片段",
-    bpm: state.bpm,
-    loop: state.loop,
-    notes: [...state.notes],
-    pattern: state.pattern.map((row) => [...row]),
-    createdAt: new Date().toISOString()
-  });
+  Schemes.saveSnapshot(state);
   save();
   renderSidebars();
 });
 
 savedList.addEventListener("click", (event) => {
   const id = event.target.closest("[data-load]")?.dataset.load;
-  const item = state.saved.find((entry) => entry.id === id);
+  const item = Schemes.findSnapshot(state, id);
   if (!item) return;
-  state.pieceName = item.name;
-  state.bpm = item.bpm;
-  state.loop = item.loop;
-  state.notes = [...item.notes];
-  state.pattern = item.pattern.map((row) => [...row]);
+  Schemes.applySnapshot(state, item);
+  clearMixerMsg();
   save();
   render();
 });
